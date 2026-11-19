@@ -12,13 +12,27 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+// Checks I added so a half-built entry fails loudly here instead of
+// silently handing the judge a broken game folder.
+const entryHtml = join(here, 'game', 'index.html');
+if (!existsSync(entryHtml)) {
+  throw new Error('game/index.html is missing — the game has no entry point, aborting the build');
+}
+const shotsDir = join(here, 'screenshots');
+const shotNames = existsSync(shotsDir)
+  ? readdirSync(shotsDir).filter((name) => /\.(png|jpe?g)$/i.test(name)).sort()
+  : [];
+if (shotNames.length < 3 || shotNames.length > 4) {
+  throw new Error(`expected 3 or 4 screenshots in screenshots/, found ${shotNames.length}`);
+}
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
@@ -38,4 +52,30 @@ writeFileSync(
     game_max_bytes: 50331648,
     game_path_max_bytes: 1000,
   }),
+);
+
+// Build summary I print so the log shows exactly what was handed in.
+function tallyDir(dir: string): { files: number; bytes: number } {
+  let files = 0;
+  let bytes = 0;
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) {
+      const sub = tallyDir(p);
+      files += sub.files;
+      bytes += sub.bytes;
+    } else {
+      files += 1;
+      bytes += st.size;
+    }
+  }
+  return { files, bytes };
+}
+
+const gameTally = tallyDir(join(out, 'game'));
+const dossierBytes = statSync(join(out, 'dossier.json')).size;
+console.log(
+  `build summary: ${gameTally.files} game files (${gameTally.bytes} bytes), ` +
+    `${shotNames.length} screenshots, dossier.json ${dossierBytes} bytes`,
 );
